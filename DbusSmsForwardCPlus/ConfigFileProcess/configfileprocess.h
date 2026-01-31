@@ -98,6 +98,7 @@ void checkConfig(string configFilePath) {
                 configFile << "ForwardDeviceName = " << endl;
                 configFile << "smsCodeKey = 验证码±verification±code±인증±代码±随机码" << endl;
                 configFile << "forwardIgnoreStorageType = sm" << endl;
+                configFile << "autoDeleteSms = false" << endl;
                 configFile.close();
             }
             else {
