@@ -120,6 +120,16 @@ devicename 转发设备名称
 举例在rc.loacl中设置自启动的命令
 ( DbusSmsForwardCPlus -fE --configfile=/root/config.txt > /dev/null ) &
 
+**转发后自动删除短信：**
+
+程序支持在转发短信成功后自动删除设备上的短信，以节省设备存储空间。
+
+在配置文件config.txt中设置：
+```
+autoDeleteSms = true
+```
+设置为`true`则开启自动删除，设置为`false`或不设置则不删除（默认不删除）。
+
 
 # 参考
 1. [ModemManager API document](https://www.freedesktop.org/software/ModemManager/api/latest/)

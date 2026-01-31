@@ -12,8 +12,12 @@ void getAndSendSmsContent(string sendMethodGuideResult, const char* smsPath, uin
 void parseDBusMessageAndSend(DBusMessage* message, string sendMethodGuideResult);
 void monitorDbus(string sendMethodGuideResult);
 void sendSms(string telNumber, string smsText, string target);
+void deleteSmsFromDevice(const char* smsPath);
 
 void getAndSendSmsContent(string sendMethodGuideResult, const char* smsPath, uint32_t storageTypeNum) {
+    // 读取配置文件
+    map<string, string> configMap = readConfigFile();
+    
     DBusError GetSmsContentError;
     dbus_error_init(&GetSmsContentError);
     DBusConnection* GetSmsContentConnection = dbus_bus_get(DBUS_BUS_SYSTEM, &GetSmsContentError);
@@ -109,6 +113,11 @@ void getAndSendSmsContent(string sendMethodGuideResult, const char* smsPath, uin
         if (string(smscontent) != "")
         {
             fordardSendSms(sendMethodGuideResult, string(telnum), string(smscontent), string(smsdate));
+            // 检查是否需要自动删除短信
+            string autoDeleteSms = configMap["autoDeleteSms"];
+            if (autoDeleteSms == "true") {
+                deleteSmsFromDevice(smsPath);
+            }
             // 释放消息资源
             dbus_message_unref(reply);
             dbus_message_unref(smsContentMessage);
@@ -415,6 +424,52 @@ void sendSms(string telNumber, string smsText, string target) {
             dbus_connection_unref(DeleteSmsContentConnection);
         }
     }
+}
+
+// 删除设备上的短信
+void deleteSmsFromDevice(const char* smsPath) {
+    DBusError DeleteSmsError;
+    dbus_error_init(&DeleteSmsError);
+    DBusConnection* DeleteSmsConnection = dbus_bus_get(DBUS_BUS_SYSTEM, &DeleteSmsError);
+    if (dbus_error_is_set(&DeleteSmsError))
+    {
+        printf("DBus connection error::\n%s\n", DeleteSmsError.message);
+        dbus_error_free(&DeleteSmsError);
+        return;
+    }
+    // 创建方法调用删除短信消息
+    DBusMessage* DeleteSmsMessage = dbus_message_new_method_call(
+        "org.freedesktop.ModemManager1",  // 目标接口
+        "/org/freedesktop/ModemManager1/Modem/0", // 目标路径
+        "org.freedesktop.ModemManager1.Modem.Messaging", // 接口名称
+        "Delete" // 方法名称
+    );
+    dbus_message_append_args(DeleteSmsMessage, DBUS_TYPE_OBJECT_PATH, &smsPath, DBUS_TYPE_INVALID);
+
+    // 发送方法调用消息并等待回复
+    DBusPendingCall* pendingCallDelete;
+    dbus_connection_send_with_reply(DeleteSmsConnection, DeleteSmsMessage, &pendingCallDelete, -1);
+    dbus_connection_flush(DeleteSmsConnection);
+    dbus_message_unref(DeleteSmsMessage);
+    // 等待回复
+    dbus_pending_call_block(pendingCallDelete);
+    // 获取回复消息
+    DBusMessage* deletereply = dbus_pending_call_steal_reply(pendingCallDelete);
+    if (deletereply) {
+        if (dbus_message_is_error(deletereply, DBUS_ERROR_UNKNOWN_METHOD)) {
+            cerr << "Delete SMS method call failed: Unknown method" << endl;
+        }
+        else {
+            printf("短信已自动删除\n");
+        }
+        dbus_message_unref(deletereply);
+    }
+    else {
+        cerr << "Failed to get delete reply." << endl;
+    }
+    dbus_pending_call_unref(pendingCallDelete);
+    // 关闭连接
+    dbus_connection_unref(DeleteSmsConnection);
 }
 
 #endif // DBUSSMSMETHOD_H

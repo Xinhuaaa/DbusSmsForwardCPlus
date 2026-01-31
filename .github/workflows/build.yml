@@ -1,0 +1,129 @@
+name: Build Debian ARM
+
+on:
+  push:
+    branches: [ master, main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        arch: [armhf, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install cross-compilation tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          crossbuild-essential-${{ matrix.arch }}
+
+    - name: Setup ARM architecture and apt sources
+      run: |
+        sudo dpkg --add-architecture ${{ matrix.arch }}
+        
+        # Configure apt sources for cross-compilation
+        # amd64/i386 use archive.ubuntu.com, arm64/armhf use ports.ubuntu.com
+        sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates noble-backports noble-security
+Components: main restricted universe multiverse
+Architectures: amd64 i386
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: noble noble-updates noble-backports noble-security
+Components: main restricted universe multiverse
+Architectures: armhf arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+        
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo apt-get update
+
+    - name: Install ARM dependencies
+      run: |
+        sudo apt-get install -y \
+          libdbus-1-dev:${{ matrix.arch }} \
+          libssl-dev:${{ matrix.arch }} \
+          libcurl4-openssl-dev:${{ matrix.arch }}
+
+    - name: Set compiler variables
+      id: compiler
+      run: |
+        if [ "${{ matrix.arch }}" = "armhf" ]; then
+          echo "CC=arm-linux-gnueabihf-gcc" >> $GITHUB_OUTPUT
+          echo "CXX=arm-linux-gnueabihf-g++" >> $GITHUB_OUTPUT
+          echo "PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig" >> $GITHUB_OUTPUT
+          echo "ARCH_DIR=arm-linux-gnueabihf" >> $GITHUB_OUTPUT
+        else
+          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_OUTPUT
+          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_OUTPUT
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_OUTPUT
+          echo "ARCH_DIR=aarch64-linux-gnu" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build
+      working-directory: DbusSmsForwardCPlus
+      run: |
+        export CC=${{ steps.compiler.outputs.CC }}
+        export CXX=${{ steps.compiler.outputs.CXX }}
+        export PKG_CONFIG_PATH=${{ steps.compiler.outputs.PKG_CONFIG_PATH }}
+        export ARCH_DIR=${{ steps.compiler.outputs.ARCH_DIR }}
+        
+        $CXX -Wall -Wextra -Wno-error=format-security \
+          -I/usr/include/dbus-1.0 \
+          -I/usr/lib/${ARCH_DIR}/dbus-1.0/include \
+          -I/usr/include \
+          -L/usr/lib/${ARCH_DIR} \
+          main.cpp mail.cpp \
+          -o DbusSmsForwardCPlus-${{ matrix.arch }} \
+          -ldbus-1 -lssl -lcrypto -lcurl -lpthread
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DbusSmsForwardCPlus-${{ matrix.arch }}
+        path: DbusSmsForwardCPlus/DbusSmsForwardCPlus-${{ matrix.arch }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Download armhf artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DbusSmsForwardCPlus-armhf
+        path: ./release
+
+    - name: Download arm64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DbusSmsForwardCPlus-arm64
+        path: ./release
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ./release/DbusSmsForwardCPlus-armhf
+          ./release/DbusSmsForwardCPlus-arm64
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
